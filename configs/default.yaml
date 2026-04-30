@@ -1,0 +1,29 @@
+pitch:
+  length_m: 105.0
+  width_m: 68.0
+
+tracking:
+  lost_after_frames: 12
+  out_after_frames: 45
+  tracker_yaml: bytetrack.yaml
+
+detection:
+  person_class_id: 0
+  conf: 0.25
+  iou: 0.55
+
+render:
+  minimap_width: 320
+  minimap_height: 208
+  minimap_margin: 18
+  draw_lost_players: true
+
+# MVP용 단순 화면 좌표 -> 피치 좌표 변환입니다.
+# 실제 단계에서는 흰선 기준점 4~8개를 찍어 homography_matrix를 저장합니다.
+homography:
+  enabled: false
+  matrix:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+

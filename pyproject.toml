@@ -1,0 +1,21 @@
+[project]
+name = "soccer-ai-mvp"
+version = "0.1.0"
+description = "School and amateur football match recording/analysis MVP"
+requires-python = ">=3.9"
+dependencies = [
+  "ultralytics>=8.3.0",
+  "opencv-python>=4.9.0",
+  "numpy>=1.26.0",
+  "pandas>=2.2.0",
+  "pyyaml>=6.0.0",
+  "tqdm>=4.66.0"
+]
+
+[project.scripts]
+soccer-analyze = "soccer_ai_mvp.cli:main"
+soccer-check-mps = "soccer_ai_mvp.check_mps:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"

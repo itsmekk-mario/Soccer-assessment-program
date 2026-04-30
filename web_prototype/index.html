@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>축구 경기 분석 프로그램</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Football Match Vision</p>
+          <h1>축구 경기 분석 프로그램</h1>
+        </div>
+        <div class="match-clock" aria-label="분석 시간">
+          <span id="clockValue">00:00</span>
+          <small id="modeValue">샘플 분석</small>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="control-panel" aria-label="분석 설정">
+          <section class="panel-section">
+            <h2>소스</h2>
+            <label class="upload-box" id="dropZone" for="mediaInput">
+              <input id="mediaInput" type="file" accept="image/*,video/*" />
+              <span>경기 영상 또는 이미지 선택</span>
+              <small>맥으로 가져온 아이패드 촬영 파일도 여기에 놓습니다</small>
+            </label>
+            <button class="camera-button" id="cameraButton" type="button">실시간 카메라 시작</button>
+            <p class="camera-status" id="cameraStatus">카메라 대기</p>
+          </section>
+
+          <section class="panel-section">
+            <h2>아이패드 촬영</h2>
+            <label class="capture-row" for="ipadCaptureInput">
+              <input id="ipadCaptureInput" type="file" accept="video/*" capture="environment" />
+              <span>아이패드 카메라 파일 선택</span>
+            </label>
+            <div class="workflow-steps">
+              <span>1. 아이패드로 경기 촬영</span>
+              <span>2. AirDrop 또는 케이블로 맥 전송</span>
+              <span>3. 영상 파일 업로드 후 분석</span>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>분석 모드</h2>
+            <div class="segmented" role="group" aria-label="분석 모드">
+              <button class="is-active" data-mode="live">실시간</button>
+              <button data-mode="tactics">전술</button>
+              <button data-mode="events">이벤트</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>구장 보정</h2>
+            <button class="camera-button secondary" id="calibrateButton" type="button">흰선 기준 보정</button>
+            <label class="range-row">
+              <span>카메라 가시 폭</span>
+              <input id="coverageRange" type="range" min="35" max="100" value="58" />
+            </label>
+            <p class="camera-status" id="calibrationStatus">FIFA 105 x 68m 기준 대기</p>
+          </section>
+
+          <section class="panel-section">
+            <h2>감지 라벨</h2>
+            <div class="label-list" id="labelList"></div>
+          </section>
+
+          <section class="panel-section">
+            <h2>필터</h2>
+            <label class="check-row">
+              <input type="checkbox" id="showPersons" checked />
+              <span>person 표시</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="showBall" checked />
+              <span>ball 표시</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="showZones" checked />
+              <span>압박 구역 표시</span>
+            </label>
+          </section>
+        </aside>
+
+        <section class="analysis-stage" aria-label="경기 분석 화면">
+          <div class="video-frame">
+            <video id="videoSource" playsinline muted loop></video>
+            <img id="imageSource" alt="" />
+            <canvas id="overlayCanvas" width="1280" height="720"></canvas>
+            <div class="empty-state" id="emptyState">
+              <strong>샘플 경기 장면</strong>
+              <span>파일을 선택하면 업로드한 화면으로 분석합니다</span>
+            </div>
+          </div>
+
+          <div class="timeline">
+            <button id="playButton" title="재생/정지" aria-label="재생/정지">▶</button>
+            <input id="scrubber" type="range" min="0" max="100" value="0" />
+            <span id="frameInfo">Frame 128</span>
+          </div>
+
+          <section class="pitch-map-panel" aria-label="2D 구장 좌표 분석">
+            <div class="pitch-map-head">
+              <h2>2D 피치 모델</h2>
+              <span id="projectionStatus">보정 전</span>
+            </div>
+            <canvas id="pitchMapCanvas" width="1050" height="680"></canvas>
+          </section>
+        </section>
+
+        <aside class="insight-panel" aria-label="분석 결과">
+          <section class="metric-grid">
+            <article>
+              <span>person</span>
+              <strong id="personCount">0</strong>
+            </article>
+            <article>
+              <span>ball</span>
+              <strong id="ballCount">0</strong>
+            </article>
+            <article>
+              <span>압박 강도</span>
+              <strong id="pressureValue">0%</strong>
+            </article>
+            <article>
+              <span>공 점유</span>
+              <strong id="possessionValue">0:0</strong>
+            </article>
+            <article>
+              <span>추정 person</span>
+              <strong id="estimatedCount">0</strong>
+            </article>
+            <article>
+              <span>평균 신뢰도</span>
+              <strong id="confidenceValue">0%</strong>
+            </article>
+          </section>
+
+          <section class="panel-section">
+            <h2>전술 요약</h2>
+            <p id="summaryText" class="summary"></p>
+          </section>
+
+          <section class="panel-section">
+            <h2>파일 정보</h2>
+            <dl class="file-meta" id="fileMeta">
+              <div><dt>소스</dt><dd>샘플</dd></div>
+              <div><dt>형식</dt><dd>가상 경기장</dd></div>
+              <div><dt>길이</dt><dd>-</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel-section">
+            <h2>공간 추정</h2>
+            <div class="estimate-list" id="estimateList"></div>
+          </section>
+
+          <section class="panel-section">
+            <h2>이벤트 로그</h2>
+            <ol class="event-log" id="eventLog"></ol>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
