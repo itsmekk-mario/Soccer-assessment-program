@@ -9,6 +9,10 @@ from .state import PlayerState
 TEAM_COLORS = {
     "team_red": (80, 90, 240),
     "team_blue": (230, 150, 70),
+    "team_yellow": (70, 210, 240),
+    "team_green": (90, 210, 110),
+    "team_purple": (210, 110, 210),
+    "team_dark": (55, 55, 55),
     "team_light": (220, 220, 220),
     "unknown": (160, 160, 160),
 }
@@ -22,8 +26,8 @@ STATUS_COLORS = {
 
 def draw_bbox(frame: np.ndarray, player: PlayerState) -> None:
     x1, y1, x2, y2 = [int(v) for v in player.bbox_xyxy]
-    color = STATUS_COLORS.get(player.status, (255, 255, 255))
-    label = f"ID {player.track_id} {player.status}"
+    color = TEAM_COLORS.get(player.team_hint, TEAM_COLORS["unknown"]) if player.status == "visible" else STATUS_COLORS.get(player.status, (255, 255, 255))
+    label = f"ID {player.track_id} {player.team_hint.replace('team_', '')} {player.status}"
 
     if player.status == "visible":
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -65,4 +69,3 @@ def draw_minimap(
             cv2.circle(frame, (px, py), radius + 4, STATUS_COLORS[player.status], 1)
 
     cv2.putText(frame, "2D pitch", (x0 + 8, y0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, white, 1, cv2.LINE_AA)
-

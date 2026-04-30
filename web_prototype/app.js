@@ -112,6 +112,20 @@ function colorForTrack(id) {
   return `hsl(${hue} 78% 62%)`;
 }
 
+function colorForTeam(team, fallbackId) {
+  const colors = {
+    team_red: "#f07167",
+    team_blue: "#62a8e8",
+    team_yellow: "#f3bd4f",
+    team_green: "#65c77a",
+    team_purple: "#c084fc",
+    team_dark: "#9aa4a0",
+    team_light: "#f2f7f3",
+    unknown: colorForTrack(fallbackId)
+  };
+  return colors[team] || colors.unknown;
+}
+
 function activeTrackIds() {
   return new Set(state.detections.filter((item) => item.label === "person").map((item) => String(item.id)));
 }
@@ -298,7 +312,7 @@ function drawPitchMap(model) {
 
   [...model.estimated, ...model.observed].forEach((item) => {
     const point = pitchToMap(item);
-    const color = colorForTrack(item.trackId || item.role || item.id);
+    const color = colorForTeam(item.team, item.trackId || item.role || item.id);
     pitchCtx.save();
     pitchCtx.fillStyle = "rgba(17, 20, 19, 0.72)";
     const label = item.role || (item.trackId ? `ID ${item.trackId}` : "ID");
@@ -330,7 +344,8 @@ function drawTrackLines() {
       const prev = pitchToMap(visiblePoints[index - 1]);
       const next = pitchToMap(visiblePoints[index]);
       const progress = index / visiblePoints.length;
-      pitchCtx.strokeStyle = colorForTrack(trackId);
+    const team = visiblePoints[visiblePoints.length - 1].team || "unknown";
+    pitchCtx.strokeStyle = colorForTeam(team, trackId);
       pitchCtx.lineWidth = 1.2 + progress * 3.2;
       pitchCtx.globalAlpha = 0.16 + progress * 0.78;
       pitchCtx.beginPath();
@@ -344,7 +359,7 @@ function drawTrackLines() {
     const angle = Math.atan2(end.y - beforeEnd.y, end.x - beforeEnd.x);
 
     pitchCtx.globalAlpha = 1;
-    pitchCtx.fillStyle = colorForTrack(trackId);
+    pitchCtx.fillStyle = colorForTeam(team, trackId);
     pitchCtx.beginPath();
     pitchCtx.moveTo(end.x + Math.cos(angle) * 10, end.y + Math.sin(angle) * 10);
     pitchCtx.lineTo(end.x + Math.cos(angle + 2.45) * 8, end.y + Math.sin(angle + 2.45) * 8);
@@ -514,7 +529,7 @@ function handleTracksFile(file) {
 
       if (Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
         if (!paths.has(detection.id)) paths.set(detection.id, []);
-        paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status });
+        paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status, team: detection.team });
       }
     });
 
