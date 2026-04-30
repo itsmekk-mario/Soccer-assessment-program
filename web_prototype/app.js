@@ -12,6 +12,9 @@ const tracksStatus = document.querySelector("#tracksStatus");
 const calibrateButton = document.querySelector("#calibrateButton");
 const calibrationStatus = document.querySelector("#calibrationStatus");
 const coverageRange = document.querySelector("#coverageRange");
+const trailRange = document.querySelector("#trailRange");
+const showTrackLabels = document.querySelector("#showTrackLabels");
+const showInactiveTracks = document.querySelector("#showInactiveTracks");
 const videoSource = document.querySelector("#videoSource");
 const imageSource = document.querySelector("#imageSource");
 const emptyState = document.querySelector("#emptyState");
@@ -68,6 +71,7 @@ const state = {
   maxTrackFrame: 0,
   calibrated: false,
   coveragePercent: 58,
+  trailFrames: 180,
   spatialModel: {
     observed: [],
     estimated: [],
@@ -106,6 +110,10 @@ function colorForTrack(id) {
   const value = String(id || "0").split("").reduce((total, char) => total + char.charCodeAt(0), 0);
   const hue = (value * 47) % 360;
   return `hsl(${hue} 78% 62%)`;
+}
+
+function activeTrackIds() {
+  return new Set(state.detections.filter((item) => item.label === "person").map((item) => String(item.id)));
 }
 
 function getCoverageBounds() {
@@ -286,48 +294,63 @@ function drawPitchMap(model) {
     drawTrackLines();
   }
 
+  if (!showTrackLabels.checked) return;
+
   [...model.estimated, ...model.observed].forEach((item) => {
     const point = pitchToMap(item);
     const color = colorForTrack(item.trackId || item.role || item.id);
     pitchCtx.save();
-    pitchCtx.strokeStyle = color;
-    pitchCtx.lineWidth = item.source === "estimated" ? 2 : 3;
-    pitchCtx.beginPath();
-    pitchCtx.moveTo(point.x - 8, point.y);
-    pitchCtx.lineTo(point.x + 8, point.y);
-    pitchCtx.moveTo(point.x, point.y - 8);
-    pitchCtx.lineTo(point.x, point.y + 8);
-    pitchCtx.stroke();
-    pitchCtx.fillStyle = color;
+    pitchCtx.fillStyle = "rgba(17, 20, 19, 0.72)";
+    const label = item.role || (item.trackId ? `ID ${item.trackId}` : "ID");
     pitchCtx.font = "700 18px Arial";
-    const label = item.role || (item.id ? `ID ${item.id}` : "person");
-    pitchCtx.fillText(label, point.x + 14, point.y + 6);
+    const width = pitchCtx.measureText(label).width + 14;
+    pitchCtx.fillRect(point.x + 8, point.y - 16, width, 24);
+    pitchCtx.fillStyle = color;
+    pitchCtx.fillText(label, point.x + 15, point.y + 2);
     pitchCtx.restore();
   });
 }
 
 function drawTrackLines() {
-  const tailFrames = 180;
+  const tailFrames = state.trailFrames;
   const startFrame = Math.max(0, state.frame - tailFrames);
+  const activeIds = activeTrackIds();
 
   state.trackPaths.forEach((points, trackId) => {
+    if (!showInactiveTracks.checked && !activeIds.has(String(trackId))) return;
+
     const visiblePoints = points.filter((point) => point.frame >= startFrame && point.frame <= state.frame);
-    if (visiblePoints.length < 2) return;
+    if (visiblePoints.length < 4) return;
 
     pitchCtx.save();
-    pitchCtx.strokeStyle = colorForTrack(trackId);
-    pitchCtx.lineWidth = 3;
-    pitchCtx.globalAlpha = 0.82;
+    pitchCtx.lineCap = "round";
+    pitchCtx.lineJoin = "round";
+
+    for (let index = 1; index < visiblePoints.length; index += 1) {
+      const prev = pitchToMap(visiblePoints[index - 1]);
+      const next = pitchToMap(visiblePoints[index]);
+      const progress = index / visiblePoints.length;
+      pitchCtx.strokeStyle = colorForTrack(trackId);
+      pitchCtx.lineWidth = 1.2 + progress * 3.2;
+      pitchCtx.globalAlpha = 0.16 + progress * 0.78;
+      pitchCtx.beginPath();
+      pitchCtx.moveTo(prev.x, prev.y);
+      pitchCtx.lineTo(next.x, next.y);
+      pitchCtx.stroke();
+    }
+
+    const end = pitchToMap(visiblePoints[visiblePoints.length - 1]);
+    const beforeEnd = pitchToMap(visiblePoints[Math.max(0, visiblePoints.length - 5)]);
+    const angle = Math.atan2(end.y - beforeEnd.y, end.x - beforeEnd.x);
+
+    pitchCtx.globalAlpha = 1;
+    pitchCtx.fillStyle = colorForTrack(trackId);
     pitchCtx.beginPath();
-    visiblePoints.forEach((point, index) => {
-      const mapped = pitchToMap(point);
-      if (index === 0) {
-        pitchCtx.moveTo(mapped.x, mapped.y);
-      } else {
-        pitchCtx.lineTo(mapped.x, mapped.y);
-      }
-    });
-    pitchCtx.stroke();
+    pitchCtx.moveTo(end.x + Math.cos(angle) * 10, end.y + Math.sin(angle) * 10);
+    pitchCtx.lineTo(end.x + Math.cos(angle + 2.45) * 8, end.y + Math.sin(angle + 2.45) * 8);
+    pitchCtx.lineTo(end.x + Math.cos(angle - 2.45) * 8, end.y + Math.sin(angle - 2.45) * 8);
+    pitchCtx.closePath();
+    pitchCtx.fill();
     pitchCtx.restore();
   });
 }
@@ -634,6 +657,13 @@ coverageRange.addEventListener("input", (event) => {
   calibrationStatus.textContent = `카메라 가시 폭 ${state.coveragePercent}%`;
   render();
 });
+
+trailRange.addEventListener("input", (event) => {
+  state.trailFrames = Number(event.target.value);
+  render();
+});
+
+[showTrackLabels, showInactiveTracks].forEach((input) => input.addEventListener("change", render));
 
 dropZone.addEventListener("dragover", (event) => {
   event.preventDefault();

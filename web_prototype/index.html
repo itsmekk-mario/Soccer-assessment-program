@@ -74,6 +74,22 @@
           </section>
 
           <section class="panel-section">
+            <h2>트래킹 표시</h2>
+            <label class="range-row">
+              <span>궤적 길이</span>
+              <input id="trailRange" type="range" min="30" max="600" value="180" />
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="showTrackLabels" checked />
+              <span>ID 라벨 표시</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="showInactiveTracks" />
+              <span>비활성 ID도 표시</span>
+            </label>
+          </section>
+
+          <section class="panel-section">
             <h2>감지 라벨</h2>
             <div class="label-list" id="labelList"></div>
           </section>
