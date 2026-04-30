@@ -222,7 +222,7 @@ function buildSpatialModel(detections) {
     .map((item, index) => ({
       id: `OBS-${index + 1}`,
       team: item.team,
-      role: "OBS",
+      role: item.id ? `ID ${item.id}` : `ID ${index + 1}`,
       source: item.status === "visible" ? "observed" : "estimated",
       confidence: item.confidence,
       ...imagePercentToPitch(item)
@@ -289,7 +289,8 @@ function drawPitchMap(model) {
     pitchCtx.globalAlpha = 1;
     pitchCtx.fillStyle = "#f2f7f3";
     pitchCtx.font = "700 18px Arial";
-    pitchCtx.fillText(isEstimate ? item.role : "person", point.x + 14, point.y + 6);
+    const label = item.role || (item.id ? `ID ${item.id}` : "person");
+    pitchCtx.fillText(label, point.x + 14, point.y + 6);
     pitchCtx.restore();
   });
 }
