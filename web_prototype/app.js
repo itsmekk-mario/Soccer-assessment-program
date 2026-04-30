@@ -64,6 +64,7 @@ const state = {
   detections: [],
   tracksLoaded: false,
   tracksByFrame: new Map(),
+  trackPaths: new Map(),
   maxTrackFrame: 0,
   calibrated: false,
   coveragePercent: 58,
@@ -99,6 +100,12 @@ function pitchToMap(point) {
     x: (point.x / PITCH.length) * pitchMapCanvas.width,
     y: (point.y / PITCH.width) * pitchMapCanvas.height
   };
+}
+
+function colorForTrack(id) {
+  const value = String(id || "0").split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+  const hue = (value * 47) % 360;
+  return `hsl(${hue} 78% 62%)`;
 }
 
 function getCoverageBounds() {
@@ -221,6 +228,7 @@ function buildSpatialModel(detections) {
     .filter((item) => item.label === "person")
     .map((item, index) => ({
       id: `OBS-${index + 1}`,
+      trackId: item.id,
       team: item.team,
       role: item.id ? `ID ${item.id}` : `ID ${index + 1}`,
       source: item.status === "visible" ? "observed" : "estimated",
@@ -274,23 +282,52 @@ function drawPitchMap(model) {
   );
   pitchCtx.restore();
 
+  if (state.tracksLoaded) {
+    drawTrackLines();
+  }
+
   [...model.estimated, ...model.observed].forEach((item) => {
     const point = pitchToMap(item);
-    const isEstimate = item.source === "estimated";
+    const color = colorForTrack(item.trackId || item.role || item.id);
     pitchCtx.save();
+    pitchCtx.strokeStyle = color;
+    pitchCtx.lineWidth = item.source === "estimated" ? 2 : 3;
     pitchCtx.beginPath();
-    pitchCtx.arc(point.x, point.y, isEstimate ? 10 : 12, 0, Math.PI * 2);
-    pitchCtx.fillStyle = isEstimate ? COLORS.estimate : COLORS.person;
-    pitchCtx.globalAlpha = isEstimate ? 0.72 : 1;
-    pitchCtx.fill();
-    pitchCtx.strokeStyle = item.team === "A" ? "#62a8e8" : "#f07167";
-    pitchCtx.lineWidth = 3;
+    pitchCtx.moveTo(point.x - 8, point.y);
+    pitchCtx.lineTo(point.x + 8, point.y);
+    pitchCtx.moveTo(point.x, point.y - 8);
+    pitchCtx.lineTo(point.x, point.y + 8);
     pitchCtx.stroke();
-    pitchCtx.globalAlpha = 1;
-    pitchCtx.fillStyle = "#f2f7f3";
+    pitchCtx.fillStyle = color;
     pitchCtx.font = "700 18px Arial";
     const label = item.role || (item.id ? `ID ${item.id}` : "person");
     pitchCtx.fillText(label, point.x + 14, point.y + 6);
+    pitchCtx.restore();
+  });
+}
+
+function drawTrackLines() {
+  const tailFrames = 180;
+  const startFrame = Math.max(0, state.frame - tailFrames);
+
+  state.trackPaths.forEach((points, trackId) => {
+    const visiblePoints = points.filter((point) => point.frame >= startFrame && point.frame <= state.frame);
+    if (visiblePoints.length < 2) return;
+
+    pitchCtx.save();
+    pitchCtx.strokeStyle = colorForTrack(trackId);
+    pitchCtx.lineWidth = 3;
+    pitchCtx.globalAlpha = 0.82;
+    pitchCtx.beginPath();
+    visiblePoints.forEach((point, index) => {
+      const mapped = pitchToMap(point);
+      if (index === 0) {
+        pitchCtx.moveTo(mapped.x, mapped.y);
+      } else {
+        pitchCtx.lineTo(mapped.x, mapped.y);
+      }
+    });
+    pitchCtx.stroke();
     pitchCtx.restore();
   });
 }
@@ -421,6 +458,7 @@ function handleTracksFile(file) {
   reader.addEventListener("load", () => {
     const rows = parseCsv(String(reader.result || ""));
     const byFrame = new Map();
+    const paths = new Map();
     let maxFrame = 0;
 
     rows.forEach((row) => {
@@ -450,9 +488,15 @@ function handleTracksFile(file) {
 
       if (!byFrame.has(frame)) byFrame.set(frame, []);
       byFrame.get(frame).push(detection);
+
+      if (Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
+        if (!paths.has(detection.id)) paths.set(detection.id, []);
+        paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status });
+      }
     });
 
     state.tracksByFrame = byFrame;
+    state.trackPaths = paths;
     state.tracksLoaded = true;
     state.maxTrackFrame = maxFrame;
     state.frame = 0;
