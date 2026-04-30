@@ -142,6 +142,23 @@ http://localhost:8080
 
 웹 프로토타입은 좌표계, 2D 피치 모델, 카메라 가시 영역, 추정 선수 표시를 빠르게 확인하기 위한 UI입니다. 실제 분석 파이프라인은 Python 코드가 담당합니다.
 
+중요: 웹 프로토타입은 브라우저에서 YOLO를 직접 실행하지 않습니다. 가짜로 움직이는 예시 `person`도 제거했습니다. 웹에서 사람 박스와 미니맵을 보려면 먼저 Python 분석을 실행해 `data/output/tracks.csv`를 만든 뒤, 웹 화면의 `tracks.csv 불러오기`에서 해당 파일을 선택해야 합니다.
+
+전체 흐름은 아래 순서입니다.
+
+```sh
+source .venv/bin/activate
+python -m soccer_ai_mvp.cli \
+  --input data/input/match.mp4 \
+  --output data/output \
+  --model yolov8n.pt \
+  --device auto \
+  --imgsz 640 \
+  --skip 1
+```
+
+그 다음 웹에서 `data/output/tracks.csv`를 불러옵니다.
+
 ## Homography 계획
 
 현재 `homography.py`는 화면 좌표를 피치 좌표로 바꾸는 구조를 제공합니다. MVP에서는 기본적으로 화면 비율을 `105 x 68m` 피치에 매핑합니다.

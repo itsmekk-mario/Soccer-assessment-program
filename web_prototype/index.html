@@ -26,10 +26,19 @@
             <label class="upload-box" id="dropZone" for="mediaInput">
               <input id="mediaInput" type="file" accept="image/*,video/*" />
               <span>경기 영상 또는 이미지 선택</span>
-              <small>맥으로 가져온 아이패드 촬영 파일도 여기에 놓습니다</small>
+              <small>영상은 미리보기용입니다. 실제 인식은 Python 분석 결과를 불러옵니다</small>
             </label>
             <button class="camera-button" id="cameraButton" type="button">실시간 카메라 시작</button>
-            <p class="camera-status" id="cameraStatus">카메라 대기</p>
+            <p class="camera-status" id="cameraStatus">카메라 미리보기 대기</p>
+          </section>
+
+          <section class="panel-section">
+            <h2>YOLO 결과</h2>
+            <label class="capture-row" for="tracksInput">
+              <input id="tracksInput" type="file" accept=".csv,text/csv" />
+              <span>tracks.csv 불러오기</span>
+            </label>
+            <p class="camera-status" id="tracksStatus">아직 실제 인식 결과가 없습니다</p>
           </section>
 
           <section class="panel-section">
@@ -92,8 +101,8 @@
             <img id="imageSource" alt="" />
             <canvas id="overlayCanvas" width="1280" height="720"></canvas>
             <div class="empty-state" id="emptyState">
-              <strong>샘플 경기 장면</strong>
-              <span>파일을 선택하면 업로드한 화면으로 분석합니다</span>
+              <strong>실제 분석 결과 대기</strong>
+              <span>Python YOLO 분석 후 data/output/tracks.csv를 불러오세요</span>
             </div>
           </div>
 

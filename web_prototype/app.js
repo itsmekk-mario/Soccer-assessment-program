@@ -4,9 +4,11 @@ const pitchMapCanvas = document.querySelector("#pitchMapCanvas");
 const pitchCtx = pitchMapCanvas.getContext("2d");
 const mediaInput = document.querySelector("#mediaInput");
 const ipadCaptureInput = document.querySelector("#ipadCaptureInput");
+const tracksInput = document.querySelector("#tracksInput");
 const dropZone = document.querySelector("#dropZone");
 const cameraButton = document.querySelector("#cameraButton");
 const cameraStatus = document.querySelector("#cameraStatus");
+const tracksStatus = document.querySelector("#tracksStatus");
 const calibrateButton = document.querySelector("#calibrateButton");
 const calibrationStatus = document.querySelector("#calibrationStatus");
 const coverageRange = document.querySelector("#coverageRange");
@@ -50,25 +52,6 @@ const PITCH = {
   width: 68
 };
 
-const FORMATION_PRIORS = [
-  { id: "A-GK", team: "A", role: "GK", x: 7, y: 34 },
-  { id: "A-LB", team: "A", role: "LB", x: 24, y: 12 },
-  { id: "A-CB", team: "A", role: "CB", x: 25, y: 30 },
-  { id: "A-RB", team: "A", role: "RB", x: 24, y: 56 },
-  { id: "A-DM", team: "A", role: "DM", x: 42, y: 34 },
-  { id: "A-LW", team: "A", role: "LW", x: 58, y: 14 },
-  { id: "A-ST", team: "A", role: "ST", x: 70, y: 34 },
-  { id: "A-RW", team: "A", role: "RW", x: 58, y: 54 },
-  { id: "B-GK", team: "B", role: "GK", x: 98, y: 34 },
-  { id: "B-LB", team: "B", role: "LB", x: 81, y: 56 },
-  { id: "B-CB", team: "B", role: "CB", x: 80, y: 38 },
-  { id: "B-RB", team: "B", role: "RB", x: 81, y: 12 },
-  { id: "B-DM", team: "B", role: "DM", x: 63, y: 34 },
-  { id: "B-LW", team: "B", role: "LW", x: 47, y: 54 },
-  { id: "B-ST", team: "B", role: "ST", x: 35, y: 34 },
-  { id: "B-RW", team: "B", role: "RW", x: 47, y: 14 }
-];
-
 const state = {
   sourceType: "sample",
   mode: "live",
@@ -79,6 +62,9 @@ const state = {
   mediaDuration: null,
   cameraStream: null,
   detections: [],
+  tracksLoaded: false,
+  tracksByFrame: new Map(),
+  maxTrackFrame: 0,
   calibrated: false,
   coveragePercent: 58,
   spatialModel: {
@@ -93,39 +79,15 @@ function normalizeLabel(label) {
   return PERSON_ALIASES.has(key) ? "person" : key;
 }
 
-function sampleDetections(frame) {
-  const shift = Math.sin(frame / 18) * 3;
-  const rawDetections = [
-    { label: "player", team: "A", x: 18 + shift, y: 33, w: 4.2, h: 12, confidence: 0.94 },
-    { label: "player", team: "A", x: 30 + shift, y: 48, w: 4, h: 12, confidence: 0.91 },
-    { label: "player", team: "A", x: 44 + shift, y: 42, w: 4.3, h: 12.5, confidence: 0.93 },
-    { label: "player", team: "A", x: 55 + shift, y: 56, w: 4.1, h: 12, confidence: 0.89 },
-    { label: "player", team: "B", x: 63 - shift, y: 36, w: 4.2, h: 12.2, confidence: 0.92 },
-    { label: "player", team: "B", x: 72 - shift, y: 51, w: 4.2, h: 12, confidence: 0.9 },
-    { label: "player", team: "B", x: 82 - shift, y: 44, w: 4, h: 11.8, confidence: 0.88 },
-    { label: "referee", team: "OFF", x: 48, y: 28, w: 3.7, h: 11.5, confidence: 0.86 },
-    { label: "ball", team: "", x: 57 + Math.cos(frame / 12) * 7, y: 45 + Math.sin(frame / 12) * 5, w: 2, h: 2, confidence: 0.78 }
-  ];
-
-  return rawDetections.map((item) => ({ ...item, label: normalizeLabel(item.label) }));
-}
-
-function buildUploadedDetections(frame = state.frame) {
-  const drift = Math.sin(frame / 16) * 2.5;
-  return [
-    { label: normalizeLabel("person"), team: "A", x: 22 + drift, y: 38, w: 5, h: 16, confidence: 0.83 },
-    { label: normalizeLabel("person"), team: "A", x: 37 + drift, y: 52, w: 5, h: 16, confidence: 0.81 },
-    { label: normalizeLabel("person"), team: "B", x: 58 - drift, y: 36, w: 5, h: 16, confidence: 0.79 },
-    { label: normalizeLabel("person"), team: "B", x: 74 - drift, y: 58, w: 5, h: 16, confidence: 0.77 },
-    { label: normalizeLabel("ball"), team: "", x: 49 + Math.cos(frame / 10) * 5, y: 47, w: 2.2, h: 2.2, confidence: 0.72 }
-  ];
-}
-
 function px(value, axis) {
   return axis === "x" ? (value / 100) * canvas.width : (value / 100) * canvas.height;
 }
 
 function imagePercentToPitch(point) {
+  if (Number.isFinite(point.pitchX) && Number.isFinite(point.pitchY)) {
+    return { x: point.pitchX, y: point.pitchY };
+  }
+
   return {
     x: (point.x / 100) * PITCH.length,
     y: (point.y / 100) * PITCH.width
@@ -236,18 +198,19 @@ function drawDetection(item) {
 
 function calculateMetrics(detections) {
   const persons = detections.filter((item) => item.label === "person");
+  const visiblePersons = persons.filter((item) => item.status === "visible");
   const balls = detections.filter((item) => item.label === "ball");
-  const left = persons.filter((item) => item.team === "A").length;
-  const right = persons.filter((item) => item.team === "B").length;
+  const left = visiblePersons.filter((item) => item.team === "team_blue" || item.team === "A").length;
+  const right = visiblePersons.filter((item) => item.team === "team_red" || item.team === "B").length;
   const ball = balls[0];
   const nearBall = ball
-    ? persons.filter((item) => Math.hypot(item.x - ball.x, item.y - ball.y) < 24).length
+    ? visiblePersons.filter((item) => Math.hypot(item.x - ball.x, item.y - ball.y) < 24).length
     : 0;
 
   return {
-    persons: persons.length,
+    persons: visiblePersons.length,
     balls: balls.length,
-    pressure: Math.min(99, Math.round(nearBall * 14 + persons.length * 3)),
+    pressure: Math.min(99, Math.round(nearBall * 14 + visiblePersons.length * 3)),
     possession: `${left}:${right}`,
     nearBall
   };
@@ -260,33 +223,13 @@ function buildSpatialModel(detections) {
       id: `OBS-${index + 1}`,
       team: item.team,
       role: "OBS",
-      source: "observed",
+      source: item.status === "visible" ? "observed" : "estimated",
       confidence: item.confidence,
       ...imagePercentToPitch(item)
     }));
 
-  const coveredObserved = persons.filter((item) => isInCoveragePitch(item));
-  const coverage = getCoverageBounds();
-  const ball = detections.find((item) => item.label === "ball");
-  const ballPitch = ball ? imagePercentToPitch(ball) : { x: PITCH.length / 2, y: PITCH.width / 2 };
-
-  const estimated = FORMATION_PRIORS.filter((prior) => !isInCoveragePitch(prior))
-    .slice(0, 8)
-    .map((prior) => {
-      const attackingBias = prior.team === "A" ? Math.max(0, ballPitch.x - 52) * 0.12 : Math.max(0, 52 - ballPitch.x) * -0.12;
-      const laneBias = (ballPitch.y - prior.y) * 0.08;
-      const distanceFromView = prior.x < (coverage.left / 100) * PITCH.length
-        ? (coverage.left / 100) * PITCH.length - prior.x
-        : prior.x - (coverage.right / 100) * PITCH.length;
-
-      return {
-        ...prior,
-        source: "estimated",
-        x: Math.max(0, Math.min(PITCH.length, prior.x + attackingBias)),
-        y: Math.max(0, Math.min(PITCH.width, prior.y + laneBias)),
-        confidence: Math.max(0.38, Math.min(0.78, 0.78 - distanceFromView / 110))
-      };
-    });
+  const coveredObserved = persons.filter((item) => item.source === "observed" && isInCoveragePitch(item));
+  const estimated = persons.filter((item) => item.source === "estimated");
 
   const all = [...coveredObserved, ...estimated];
   const averageConfidence = all.length
@@ -355,9 +298,9 @@ function renderEstimates(model) {
   estimateList.innerHTML = model.estimated.slice(0, 5)
     .map((item) => {
       const confidence = Math.round(item.confidence * 100);
-      return `<div class="estimate-row"><span>${item.id}</span><strong>${confidence}%</strong><small>${item.x.toFixed(1)}m, ${item.y.toFixed(1)}m | ${item.role} prior</small></div>`;
+      return `<div class="estimate-row"><span>${item.id}</span><strong>${confidence}%</strong><small>${item.x.toFixed(1)}m, ${item.y.toFixed(1)}m | YOLO lost/out_of_view</small></div>`;
     })
-    .join("");
+    .join("") || `<div class="estimate-row"><span>추정 없음</span><strong>-</strong><small>실제 tracks.csv를 불러오면 표시됩니다</small></div>`;
 }
 
 function renderLabels(detections) {
@@ -371,15 +314,17 @@ function renderLabels(detections) {
       const caption = label === "person" ? "사람 인식 결과는 person으로 통일" : "공 감지";
       return `<div class="label-chip"><span><strong>${label}</strong><br><small>${caption}</small></span><b>${count}</b></div>`;
     })
-    .join("");
+    .join("") || `<div class="label-chip"><span><strong>대기</strong><br><small>YOLO tracks.csv를 먼저 불러오세요</small></span><b>0</b></div>`;
 }
 
 function renderEvents(metrics) {
-  const events = [
-    `00:${String((state.frame + 8) % 60).padStart(2, "0")} 중앙 지역 person 밀집`,
-    `00:${String((state.frame + 18) % 60).padStart(2, "0")} ball 주변 압박 ${metrics.pressure}%`,
-    `00:${String((state.frame + 29) % 60).padStart(2, "0")} 좌측 전개 person 2명 관여`
-  ];
+  const events = state.tracksLoaded
+    ? [
+        `Frame ${state.frame}: visible person ${metrics.persons}`,
+        `Frame ${state.frame}: lost/out_of_view ${state.spatialModel.estimated.length}`,
+        `Frame ${state.frame}: average confidence ${Math.round(state.spatialModel.averageConfidence * 100)}%`
+      ]
+    : ["Python YOLO 분석 후 data/output/tracks.csv를 불러오면 실제 이벤트가 표시됩니다."];
 
   eventLog.innerHTML = events.map((event) => `<li>${event}</li>`).join("");
 }
@@ -419,7 +364,7 @@ function renderFileMeta() {
 }
 
 function render() {
-  state.detections = state.sourceType === "sample" ? sampleDetections(state.frame) : buildUploadedDetections(state.frame);
+  state.detections = state.tracksByFrame.get(state.frame) || [];
   state.spatialModel = buildSpatialModel(state.detections);
   const metrics = calculateMetrics(state.detections);
 
@@ -438,9 +383,12 @@ function render() {
   confidenceValue.textContent = `${Math.round(state.spatialModel.averageConfidence * 100)}%`;
   clockValue.textContent = `00:${String(state.frame % 60).padStart(2, "0")}`;
   frameInfo.textContent = `Frame ${state.frame}`;
-  scrubber.value = String(state.frame % 100);
+  scrubber.max = String(Math.max(100, state.maxTrackFrame));
+  scrubber.value = String(Math.min(state.frame, Number(scrubber.max)));
   projectionStatus.textContent = state.calibrated ? `105 x 68m 보정 | 가시 ${state.coveragePercent}%` : "보정 전";
-  summaryText.textContent = `흰선 보정 후 화면의 person 발 위치를 105 x 68m 피치 좌표로 투영합니다. 보이는 영역에서는 person ${state.spatialModel.observed.length}명을 관측하고, 보이지 않는 영역은 포지션 prior로 ${state.spatialModel.estimated.length}명을 확률 추정합니다.`;
+  summaryText.textContent = state.tracksLoaded
+    ? `Python YOLO 분석 결과를 표시 중입니다. 현재 프레임에서 visible person ${state.spatialModel.observed.length}명, lost/out_of_view ${state.spatialModel.estimated.length}명입니다.`
+    : "이 화면은 더 이상 가짜 person을 만들지 않습니다. 실제 인식은 Python에서 YOLO 분석을 실행한 뒤 tracks.csv를 불러와 표시합니다.";
   renderLabels(state.detections);
   renderEvents(metrics);
   renderEstimates(state.spatialModel);
@@ -448,11 +396,70 @@ function render() {
 }
 
 function tick() {
-  if (state.playing || state.sourceType === "camera") {
+  if (state.playing && state.tracksLoaded) {
     state.frame += 1;
+    if (state.frame > state.maxTrackFrame) state.frame = 0;
     render();
   }
   requestAnimationFrame(tick);
+}
+
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines.shift().split(",");
+  return lines.map((line) => {
+    const values = line.split(",");
+    return Object.fromEntries(headers.map((header, index) => [header, values[index]]));
+  });
+}
+
+function handleTracksFile(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    const rows = parseCsv(String(reader.result || ""));
+    const byFrame = new Map();
+    let maxFrame = 0;
+
+    rows.forEach((row) => {
+      const frame = Number(row.frame);
+      if (!Number.isFinite(frame)) return;
+      maxFrame = Math.max(maxFrame, frame);
+
+      const x1 = Number(row.bbox_x1);
+      const y1 = Number(row.bbox_y1);
+      const x2 = Number(row.bbox_x2);
+      const y2 = Number(row.bbox_y2);
+      const pitchX = Number(row.pitch_x_m);
+      const pitchY = Number(row.pitch_y_m);
+      const detection = {
+        label: "person",
+        id: row.track_id,
+        status: row.status || "visible",
+        team: row.team_hint || "unknown",
+        confidence: Number(row.confidence) || 0,
+        x: ((x1 + x2) / 2 / canvas.width) * 100,
+        y: ((y1 + y2) / 2 / canvas.height) * 100,
+        w: ((x2 - x1) / canvas.width) * 100,
+        h: ((y2 - y1) / canvas.height) * 100,
+        pitchX,
+        pitchY
+      };
+
+      if (!byFrame.has(frame)) byFrame.set(frame, []);
+      byFrame.get(frame).push(detection);
+    });
+
+    state.tracksByFrame = byFrame;
+    state.tracksLoaded = true;
+    state.maxTrackFrame = maxFrame;
+    state.frame = 0;
+    tracksStatus.textContent = `${file.name} 로드 완료: ${rows.length}개 기록`;
+    modeValue.textContent = "YOLO 결과";
+    render();
+  });
+  reader.readAsText(file);
 }
 
 function stopCameraStream() {
@@ -471,7 +478,7 @@ function handleMediaFile(file) {
   state.mediaDuration = null;
   state.sourceType = "uploaded";
   emptyState.style.display = "none";
-  modeValue.textContent = "업로드 분석";
+  modeValue.textContent = "영상 미리보기";
 
   videoSource.pause();
   videoSource.removeAttribute("src");
@@ -531,8 +538,8 @@ async function startLiveCamera() {
     imageSource.style.display = "none";
     videoSource.style.display = "block";
     emptyState.style.display = "none";
-    modeValue.textContent = "실시간 분석";
-    cameraStatus.textContent = "카메라 연결됨";
+    modeValue.textContent = "카메라 미리보기";
+    cameraStatus.textContent = "카메라 연결됨 - 웹에서는 YOLO 인식을 실행하지 않습니다";
     await videoSource.play();
     render();
   } catch (error) {
@@ -546,6 +553,10 @@ mediaInput.addEventListener("change", (event) => {
 
 ipadCaptureInput.addEventListener("change", (event) => {
   handleMediaFile(event.target.files[0]);
+});
+
+tracksInput.addEventListener("change", (event) => {
+  handleTracksFile(event.target.files[0]);
 });
 
 cameraButton.addEventListener("click", () => {
