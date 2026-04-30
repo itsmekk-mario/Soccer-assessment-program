@@ -9,7 +9,7 @@ from ultralytics import YOLO
 
 from .config import load_config
 from .devices import select_device
-from .homography import PitchMapper
+from .homography import PitchMapper, load_calibration_matrix
 from .report import write_outputs
 from .render import draw_bbox, draw_minimap
 from .state import TrackStateStore
@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640, help="YOLO 입력 크기")
     parser.add_argument("--skip", type=int, default=1, help="N프레임마다 1번 분석")
     parser.add_argument("--max-frames", type=int, default=0, help="0이면 전체 처리")
+    parser.add_argument("--calibration", default="", help="수동 흰선 보정 calibration.json 경로")
     return parser.parse_args()
 
 
@@ -83,7 +84,11 @@ def main() -> None:
         (width, height),
     )
 
-    matrix = config["homography"]["matrix"] if config["homography"]["enabled"] else None
+    matrix = None
+    if args.calibration:
+        matrix = load_calibration_matrix(args.calibration)
+    elif config["homography"]["enabled"]:
+        matrix = config["homography"]["matrix"]
     mapper = PitchMapper(width, height, config["pitch"]["length_m"], config["pitch"]["width_m"], matrix)
     store = TrackStateStore(config["tracking"]["lost_after_frames"], config["tracking"]["out_after_frames"])
 
@@ -168,4 +173,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -52,5 +52,4 @@ class TrackStateStore:
                 player.confidence = max(0.15, player.confidence * 0.96)
 
     def active_players(self) -> list[PlayerState]:
-        return [player for player in self.players.values() if player.status != "unknown"]
-
+        return [player for player in self.players.values() if player.status in {"visible", "lost"}]

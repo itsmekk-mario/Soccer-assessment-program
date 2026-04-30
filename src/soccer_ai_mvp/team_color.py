@@ -13,36 +13,38 @@ def estimate_team_hint(frame: np.ndarray, bbox_xyxy: tuple[float, float, float, 
         return "unknown"
 
     box_h = y2 - y1
+    box_w = x2 - x1
     torso_y1 = y1 + int(box_h * 0.18)
-    torso_y2 = y1 + int(box_h * 0.62)
-    crop = frame[torso_y1:torso_y2, x1:x2]
+    torso_y2 = y1 + int(box_h * 0.58)
+    torso_x1 = x1 + int(box_w * 0.18)
+    torso_x2 = x2 - int(box_w * 0.18)
+    crop = frame[torso_y1:torso_y2, torso_x1:torso_x2]
     if crop.size == 0:
         return "unknown"
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0]
     sat = hsv[:, :, 1]
     val = hsv[:, :, 2]
-    mask = (sat > 35) & (val > 45)
-    if int(np.count_nonzero(mask)) < 20:
-        mean_val = float(np.mean(val))
-        return "team_dark" if mean_val < 95 else "team_light"
+    valid = (sat > 35) & (val > 35)
+    valid_count = int(np.count_nonzero(valid))
+    if valid_count < 20:
+        return "unknown"
 
-    hue_values = hsv[:, :, 0][mask]
-    sat_values = sat[mask]
-    val_values = val[mask]
-    mean_hue = float(np.average(hue_values, weights=np.maximum(sat_values, 1)))
-    mean_val = float(np.mean(val_values))
+    yellow = valid & (hue >= 12) & (hue <= 42) & (val > 70)
+    blue = valid & (hue >= 88) & (hue <= 132)
+    dark = val < 85
 
-    if mean_val < 80:
-        return "team_dark"
-    if mean_hue < 12 or mean_hue > 165:
-        return "team_red"
-    if 12 <= mean_hue < 35:
+    yellow_ratio = float(np.count_nonzero(yellow)) / valid_count
+    blue_ratio = float(np.count_nonzero(blue)) / valid_count
+    dark_ratio = float(np.count_nonzero(dark)) / crop.size * 3
+
+    # 이 프로젝트의 현재 경기처럼 노랑 vs 파랑/검정 유니폼일 때 잔디 초록색이
+    # crop에 섞여 팀으로 오인되는 것을 막기 위해 팀 후보를 보수적으로 둡니다.
+    if yellow_ratio >= 0.16 and yellow_ratio >= blue_ratio * 1.2:
         return "team_yellow"
-    if 35 <= mean_hue < 85:
-        return "team_green"
-    if 85 <= mean_hue <= 135:
+    if blue_ratio >= 0.08 or (blue_ratio >= 0.04 and dark_ratio >= 0.35):
         return "team_blue"
-    if 135 < mean_hue <= 165:
-        return "team_purple"
-    return "team_light"
+    if dark_ratio >= 0.58:
+        return "unknown"
+    return "unknown"

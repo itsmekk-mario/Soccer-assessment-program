@@ -159,7 +159,37 @@ python -m soccer_ai_mvp.cli \
 
 그 다음 웹에서 `data/output/tracks.csv`를 불러옵니다.
 
-## Homography 계획
+## 흰선 기준 2D 보정
+
+관중석/사이드라인 각도에서 찍은 영상은 화면 좌표를 그대로 2D 보드에 넣으면 선수 위치가 크게 왜곡됩니다. 이 경우 먼저 보정 파일을 만듭니다.
+
+```sh
+cd /Users/guest-dangn/soccer_ai_mvp
+source .venv/bin/activate
+soccer-calibrate \
+  --input "/Users/guest-dangn/Desktop/경기영상.mov" \
+  --output data/output/calibration.json \
+  --frame 300
+```
+
+열리는 창에서 보이는 흰선 기준점을 클릭합니다. 최소 4개가 필요하고, 센터서클/하프라인/페널티박스 모서리처럼 실제 위치를 아는 점일수록 좋습니다. 클릭 후 `s`를 누르면 `calibration.json`이 저장됩니다.
+
+보정값을 적용해 다시 분석합니다.
+
+```sh
+python -m soccer_ai_mvp.cli \
+  --input "/Users/guest-dangn/Desktop/경기영상.mov" \
+  --output data/output_calibrated \
+  --model yolov8n.pt \
+  --device auto \
+  --imgsz 480 \
+  --skip 2 \
+  --calibration data/output/calibration.json
+```
+
+웹 프로토타입에서도 `calibration.json 불러오기`로 같은 보정값을 적용할 수 있습니다.
+
+## Homography 구조
 
 현재 `homography.py`는 화면 좌표를 피치 좌표로 바꾸는 구조를 제공합니다. MVP에서는 기본적으로 화면 비율을 `105 x 68m` 피치에 매핑합니다.
 

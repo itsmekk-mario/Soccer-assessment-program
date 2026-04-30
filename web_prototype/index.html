@@ -66,6 +66,10 @@
           <section class="panel-section">
             <h2>구장 보정</h2>
             <button class="camera-button secondary" id="calibrateButton" type="button">흰선 기준 보정</button>
+            <label class="capture-row" for="calibrationInput">
+              <input id="calibrationInput" type="file" accept=".json,application/json" />
+              <span>calibration.json 불러오기</span>
+            </label>
             <label class="range-row">
               <span>카메라 가시 폭</span>
               <input id="coverageRange" type="range" min="35" max="100" value="58" />

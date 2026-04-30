@@ -10,6 +10,7 @@ const cameraButton = document.querySelector("#cameraButton");
 const cameraStatus = document.querySelector("#cameraStatus");
 const tracksStatus = document.querySelector("#tracksStatus");
 const calibrateButton = document.querySelector("#calibrateButton");
+const calibrationInput = document.querySelector("#calibrationInput");
 const calibrationStatus = document.querySelector("#calibrationStatus");
 const coverageRange = document.querySelector("#coverageRange");
 const trailRange = document.querySelector("#trailRange");
@@ -66,10 +67,12 @@ const state = {
   cameraStream: null,
   detections: [],
   tracksLoaded: false,
+  rawTrackRows: [],
   tracksByFrame: new Map(),
   trackPaths: new Map(),
   maxTrackFrame: 0,
   calibrated: false,
+  homographyMatrix: null,
   coveragePercent: 58,
   trailFrames: 180,
   spatialModel: {
@@ -100,9 +103,24 @@ function imagePercentToPitch(point) {
 }
 
 function pitchToMap(point) {
+  const x = Math.min(PITCH.length, Math.max(0, point.x));
+  const y = Math.min(PITCH.width, Math.max(0, point.y));
   return {
-    x: (point.x / PITCH.length) * pitchMapCanvas.width,
-    y: (point.y / PITCH.width) * pitchMapCanvas.height
+    x: (x / PITCH.length) * pitchMapCanvas.width,
+    y: (y / PITCH.width) * pitchMapCanvas.height
+  };
+}
+
+function applyHomography(x, y) {
+  const matrix = state.homographyMatrix;
+  if (!matrix) return null;
+
+  const denom = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2];
+  if (Math.abs(denom) < 1e-6) return null;
+
+  return {
+    x: (matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / denom,
+    y: (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / denom
   };
 }
 
@@ -230,7 +248,7 @@ function calculateMetrics(detections) {
   const visiblePersons = persons.filter((item) => item.status === "visible");
   const balls = detections.filter((item) => item.label === "ball");
   const left = visiblePersons.filter((item) => item.team === "team_blue" || item.team === "A").length;
-  const right = visiblePersons.filter((item) => item.team === "team_red" || item.team === "B").length;
+  const right = visiblePersons.filter((item) => item.team === "team_yellow" || item.team === "B").length;
   const ball = balls[0];
   const nearBall = ball
     ? visiblePersons.filter((item) => Math.hypot(item.x - ball.x, item.y - ball.y) < 24).length
@@ -259,11 +277,11 @@ function buildSpatialModel(detections) {
     }));
 
   const coveredObserved = persons.filter((item) => item.source === "observed" && isInCoveragePitch(item));
-  const estimated = persons.filter((item) => item.source === "estimated");
+  const estimated = persons.filter((item) => item.source === "estimated" && item.status === "lost");
 
   const all = [...coveredObserved, ...estimated];
   const averageConfidence = all.length
-    ? all.reduce((total, item) => total + item.confidence, 0) / all.length
+    ? coveredObserved.reduce((total, item) => total + item.confidence, 0) / Math.max(1, coveredObserved.length)
     : 0;
 
   return {
@@ -339,13 +357,13 @@ function drawTrackLines() {
     pitchCtx.save();
     pitchCtx.lineCap = "round";
     pitchCtx.lineJoin = "round";
+    const team = visiblePoints[visiblePoints.length - 1].team || "unknown";
 
     for (let index = 1; index < visiblePoints.length; index += 1) {
       const prev = pitchToMap(visiblePoints[index - 1]);
       const next = pitchToMap(visiblePoints[index]);
       const progress = index / visiblePoints.length;
-    const team = visiblePoints[visiblePoints.length - 1].team || "unknown";
-    pitchCtx.strokeStyle = colorForTeam(team, trackId);
+      pitchCtx.strokeStyle = colorForTeam(team, trackId);
       pitchCtx.lineWidth = 1.2 + progress * 3.2;
       pitchCtx.globalAlpha = 0.16 + progress * 0.78;
       pitchCtx.beginPath();
@@ -489,58 +507,88 @@ function parseCsv(text) {
   });
 }
 
+function rebuildTracks(rows) {
+  const byFrame = new Map();
+  const paths = new Map();
+  let maxFrame = 0;
+
+  rows.forEach((row) => {
+    const frame = Number(row.frame);
+    if (!Number.isFinite(frame)) return;
+    maxFrame = Math.max(maxFrame, frame);
+
+    const x1 = Number(row.bbox_x1);
+    const y1 = Number(row.bbox_y1);
+    const x2 = Number(row.bbox_x2);
+    const y2 = Number(row.bbox_y2);
+    const footX = (x1 + x2) / 2;
+    const footY = y2;
+    const calibratedPitch = applyHomography(footX, footY);
+    const pitchX = calibratedPitch ? calibratedPitch.x : Number(row.pitch_x_m);
+    const pitchY = calibratedPitch ? calibratedPitch.y : Number(row.pitch_y_m);
+    const detection = {
+      label: "person",
+      id: row.track_id,
+      status: row.status || "visible",
+      team: row.team_hint || "unknown",
+      confidence: Number(row.confidence) || 0,
+      x: (footX / canvas.width) * 100,
+      y: (((y1 + y2) / 2) / canvas.height) * 100,
+      w: ((x2 - x1) / canvas.width) * 100,
+      h: ((y2 - y1) / canvas.height) * 100,
+      pitchX,
+      pitchY
+    };
+
+    if (!byFrame.has(frame)) byFrame.set(frame, []);
+    byFrame.get(frame).push(detection);
+
+    if (Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
+      if (!paths.has(detection.id)) paths.set(detection.id, []);
+      paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status, team: detection.team });
+    }
+  });
+
+  state.tracksByFrame = byFrame;
+  state.trackPaths = paths;
+  state.tracksLoaded = true;
+  state.maxTrackFrame = maxFrame;
+}
+
 function handleTracksFile(file) {
   if (!file) return;
 
   const reader = new FileReader();
   reader.addEventListener("load", () => {
     const rows = parseCsv(String(reader.result || ""));
-    const byFrame = new Map();
-    const paths = new Map();
-    let maxFrame = 0;
-
-    rows.forEach((row) => {
-      const frame = Number(row.frame);
-      if (!Number.isFinite(frame)) return;
-      maxFrame = Math.max(maxFrame, frame);
-
-      const x1 = Number(row.bbox_x1);
-      const y1 = Number(row.bbox_y1);
-      const x2 = Number(row.bbox_x2);
-      const y2 = Number(row.bbox_y2);
-      const pitchX = Number(row.pitch_x_m);
-      const pitchY = Number(row.pitch_y_m);
-      const detection = {
-        label: "person",
-        id: row.track_id,
-        status: row.status || "visible",
-        team: row.team_hint || "unknown",
-        confidence: Number(row.confidence) || 0,
-        x: ((x1 + x2) / 2 / canvas.width) * 100,
-        y: ((y1 + y2) / 2 / canvas.height) * 100,
-        w: ((x2 - x1) / canvas.width) * 100,
-        h: ((y2 - y1) / canvas.height) * 100,
-        pitchX,
-        pitchY
-      };
-
-      if (!byFrame.has(frame)) byFrame.set(frame, []);
-      byFrame.get(frame).push(detection);
-
-      if (Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
-        if (!paths.has(detection.id)) paths.set(detection.id, []);
-        paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status, team: detection.team });
-      }
-    });
-
-    state.tracksByFrame = byFrame;
-    state.trackPaths = paths;
-    state.tracksLoaded = true;
-    state.maxTrackFrame = maxFrame;
+    state.rawTrackRows = rows;
+    rebuildTracks(rows);
     state.frame = 0;
     tracksStatus.textContent = `${file.name} 로드 완료: ${rows.length}개 기록`;
     modeValue.textContent = "YOLO 결과";
     render();
+  });
+  reader.readAsText(file);
+}
+
+function handleCalibrationFile(file) {
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    try {
+      const data = JSON.parse(String(reader.result || "{}"));
+      if (!Array.isArray(data.matrix) || data.matrix.length !== 3) {
+        throw new Error("matrix 3x3 값이 없습니다.");
+      }
+      state.homographyMatrix = data.matrix;
+      state.calibrated = true;
+      if (state.rawTrackRows.length) rebuildTracks(state.rawTrackRows);
+      calibrationStatus.textContent = `${file.name} 적용: 흰선 기준 2D 보정`;
+      render();
+    } catch (error) {
+      calibrationStatus.textContent = `보정 파일 오류: ${error.message}`;
+    }
   });
   reader.readAsText(file);
 }
@@ -642,6 +690,10 @@ tracksInput.addEventListener("change", (event) => {
   handleTracksFile(event.target.files[0]);
 });
 
+calibrationInput.addEventListener("change", (event) => {
+  handleCalibrationFile(event.target.files[0]);
+});
+
 cameraButton.addEventListener("click", () => {
   if (state.sourceType === "camera" && state.cameraStream) {
     stopCameraStream();
@@ -662,8 +714,8 @@ cameraButton.addEventListener("click", () => {
 });
 
 calibrateButton.addEventListener("click", () => {
-  state.calibrated = true;
-  calibrationStatus.textContent = "흰선 기준 homography 보정 적용";
+  calibrationInput.click();
+  calibrationStatus.textContent = "calibration.json을 선택하면 2D 보드에 적용됩니다";
   render();
 });
 
