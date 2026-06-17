@@ -41,7 +41,7 @@ const showBall = document.querySelector("#showBall");
 const showZones = document.querySelector("#showZones");
 const modeButtons = [...document.querySelectorAll("[data-mode]")];
 
-const PERSON_ALIASES = new Set(["person", "player", "referee", "human", "people", "man", "woman"]);
+const PERSON_ALIASES = new Set(["person", "player", "human", "people", "man", "woman"]);
 
 const COLORS = {
   person: "#65c77a",
@@ -84,6 +84,7 @@ const state = {
 
 function normalizeLabel(label) {
   const key = String(label).trim().toLowerCase();
+  if (key === "referee") return "person";
   return PERSON_ALIASES.has(key) ? "person" : key;
 }
 
@@ -115,12 +116,19 @@ function applyHomography(x, y) {
   const matrix = state.homographyMatrix;
   if (!matrix) return null;
 
+  if (matrix.length === 2 && matrix[0].length === 3 && matrix[1].length === 3) {
+    return {
+      x: Math.min(PITCH.length, Math.max(0, matrix[0][0] * x + matrix[0][1] * y + matrix[0][2])),
+      y: Math.min(PITCH.width, Math.max(0, matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]))
+    };
+  }
+
   const denom = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2];
   if (Math.abs(denom) < 1e-6) return null;
 
   return {
-    x: (matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / denom,
-    y: (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / denom
+    x: Math.min(PITCH.length, Math.max(0, (matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / denom)),
+    y: Math.min(PITCH.width, Math.max(0, (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / denom))
   };
 }
 
@@ -135,7 +143,10 @@ function colorForTeam(team, fallbackId) {
     team_red: "#f07167",
     team_blue: "#62a8e8",
     team_yellow: "#f3bd4f",
-    team_green: "#65c77a",
+    referee_orange: "#f3bd4f",
+    team_orange: "#f3bd4f",
+    referee: "#f3bd4f",
+    team_green: "#f3bd4f",
     team_purple: "#c084fc",
     team_dark: "#9aa4a0",
     team_light: "#f2f7f3",
@@ -219,7 +230,7 @@ function drawDetection(item) {
   const y = px(item.y, "y");
   const w = px(item.w, "x");
   const h = px(item.h, "y");
-  const color = item.label === "ball" ? COLORS.ball : COLORS.person;
+  const color = item.label === "ball" ? COLORS.ball : colorForTeam(item.team, item.id);
 
   ctx.save();
   ctx.strokeStyle = color;
@@ -280,7 +291,7 @@ function buildSpatialModel(detections) {
   const estimated = persons.filter((item) => item.source === "estimated" && item.status === "lost");
 
   const all = [...coveredObserved, ...estimated];
-  const averageConfidence = all.length
+  const averageConfidence = coveredObserved.length
     ? coveredObserved.reduce((total, item) => total + item.confidence, 0) / Math.max(1, coveredObserved.length)
     : 0;
 
@@ -499,12 +510,22 @@ function tick() {
 }
 
 function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/);
-  const headers = lines.shift().split(",");
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = lines.shift().split(",").map((header) => header.trim());
   return lines.map((line) => {
-    const values = line.split(",");
-    return Object.fromEntries(headers.map((header, index) => [header, values[index]]));
+    const values = line.split(",").map((value) => value.trim());
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
   });
+}
+
+function parseAnalysisFile(text, fileName = "") {
+  const trimmed = text.trim();
+  if (fileName.toLowerCase().endsWith(".json") || trimmed.startsWith("{")) {
+    const bundle = JSON.parse(trimmed);
+    return Array.isArray(bundle.tracks) ? bundle.tracks : [];
+  }
+  return parseCsv(text);
 }
 
 function rebuildTracks(rows) {
@@ -517,6 +538,10 @@ function rebuildTracks(rows) {
     if (!Number.isFinite(frame)) return;
     maxFrame = Math.max(maxFrame, frame);
 
+    const boardConfidence = Number(row.board_confidence || 1);
+    if (boardConfidence < 0.95) return;
+
+    const label = normalizeLabel(row.label || row.display_role || "person");
     const x1 = Number(row.bbox_x1);
     const y1 = Number(row.bbox_y1);
     const x2 = Number(row.bbox_x2);
@@ -524,14 +549,15 @@ function rebuildTracks(rows) {
     const footX = (x1 + x2) / 2;
     const footY = y2;
     const calibratedPitch = applyHomography(footX, footY);
-    const pitchX = calibratedPitch ? calibratedPitch.x : Number(row.pitch_x_m);
-    const pitchY = calibratedPitch ? calibratedPitch.y : Number(row.pitch_y_m);
+    const pitchX = calibratedPitch ? calibratedPitch.x : Number(row.smooth_pitch_x_m || row.pitch_x_m);
+    const pitchY = calibratedPitch ? calibratedPitch.y : Number(row.smooth_pitch_y_m || row.pitch_y_m);
     const detection = {
-      label: "person",
+      label,
       id: row.track_id,
       status: row.status || "visible",
-      team: row.team_hint || "unknown",
+      team: row.display_team || (row.team_hint === "team_blue" ? "team_blue" : "team_yellow"),
       confidence: Number(row.confidence) || 0,
+      boardConfidence,
       x: (footX / canvas.width) * 100,
       y: (((y1 + y2) / 2) / canvas.height) * 100,
       w: ((x2 - x1) / canvas.width) * 100,
@@ -543,7 +569,7 @@ function rebuildTracks(rows) {
     if (!byFrame.has(frame)) byFrame.set(frame, []);
     byFrame.get(frame).push(detection);
 
-    if (Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
+    if (label === "person" && Number.isFinite(pitchX) && Number.isFinite(pitchY)) {
       if (!paths.has(detection.id)) paths.set(detection.id, []);
       paths.get(detection.id).push({ frame, x: pitchX, y: pitchY, status: detection.status, team: detection.team });
     }
@@ -560,7 +586,7 @@ function handleTracksFile(file) {
 
   const reader = new FileReader();
   reader.addEventListener("load", () => {
-    const rows = parseCsv(String(reader.result || ""));
+    const rows = parseAnalysisFile(String(reader.result || ""), file.name);
     state.rawTrackRows = rows;
     rebuildTracks(rows);
     state.frame = 0;
